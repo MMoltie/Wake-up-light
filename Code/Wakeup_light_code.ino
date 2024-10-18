@@ -1,3 +1,14 @@
+/*************************************************** 
+This code is for a wake-up light with reading light
+function. The accompanying settings.h file contains
+user settings. 
+The general working of the code is that it loops through
+various functions at a specific interval. 
+It gets the current time from the RTC and checks 
+if this time is within an alarm time. 
+Then it updates the lights, sound and display accordingly.
+***************************************************/
+
 #include "SPI.h"
 #include "Adafruit_GFX.h"
 #include "Adafruit_GC9A01A.h"
@@ -118,7 +129,7 @@ void setup() {
   while (!swSerial){
     ; //wait for serial port to open
   }
-  Serial.println("soundboard connected");
+  Serial.println("Soundboard connected");
   pinMode(SFX_RX, INPUT);
   pinMode(SFX_TX, OUTPUT);
 
@@ -133,37 +144,8 @@ void setup() {
   pinMode(purpleLED, OUTPUT);
   pinMode(orangeLED, OUTPUT);
 
-  // Change Timer0 to increase frequency on pins 5 and 6
+  // Change frequency of LED pins to counter flicker
   TCCR0B = TCCR0B & 0b11111000 | 0x01;  // Set prescaler to 1, frequency = ~62500Hz
-
-  //LEDs check
-  for(int i = 0; i<=255; i+=5){
-    analogWrite(blueLED, i);
-    delay(10);
-  }
-  delay(10);
-  for(int i = 0; i<=255; i+=5){
-    analogWrite(purpleLED, i);
-    delay(10);
-  }
-  for(int i = 255; i>=0; i-=5){
-    analogWrite(blueLED, i);
-    delay(10);
-  } 
-  delay(10);  
-  for(int i = 0; i<=255; i+=5){
-    analogWrite(orangeLED, i);
-    delay(10);
-  }
-  for(int i = 255; i>=0; i-=5){
-    analogWrite(purpleLED, i);
-    delay(10);
-  } 
-  delay(10); 
-  for(int i = 255; i>=0; i-=5){
-    analogWrite(orangeLED, i);
-    delay(10);
-  }
 
   Serial.println("Setup complete!");
 }
@@ -193,12 +175,14 @@ void loop() {
 
     updateDisplay();
 
+    //depending on the clock mode, change the behaviour of the rotary encoder knob
     switch(mode){
       case 0: //default 
         if (newPos != position){
-          dimFlag = millis() + 3600000; //set a flag in 1 seconds
+          dimFlag = millis() + 3600000; //set a flag in 1 minute
           dimcount = 0;
 
+          //If knob is turned, reading time is increased or decreased. First in increments of 1 minute, then 5, then 10.
           if(newPos >= position){
             if(readingTime <= 5){
               readingTime = readingTime + 1;
@@ -213,7 +197,6 @@ void loop() {
               readingTime = 0;
             }  
           }
-
 
           readEnd = convertTimetoUnix + (readingTime*60);  //reading end time is current time + readingtime (in Unix)
         }
@@ -330,8 +313,8 @@ void loop() {
     delay(25);                          //debounce
 
     if(!digitalRead(setButton)){        //if set button is pressed:
-      mode = (mode + 1) % 7;            //increase the mode by one, and rollover at 4
-      framecount = 0;                   //reset frame counts
+      mode = (mode + 1) % 7;            //increase the mode by one, and rollover at 6
+      framecount = 0;                   //reset frame counter
       dimcount = 0;                     //reset dimming counter
       while(!digitalRead(setButton)){}  //wait for button release
     }
@@ -360,7 +343,15 @@ void setCompileTime(){
 }
 
 void getAlarm(){
-  //sTimeData_t t, alarmStart, alarmTime, alarmStop;
+  /* 
+  This function tells the clock which alarm state it is in. 
+  Fist it collects the user's set alarm hh:mm.
+  Then it detracts 20 minutes, which is the moment the LED's should start lighting up. This is alarm case 1.
+  When the alarm time is reached and for 5 minutes afterwards the LED's should remain being fully lit and an alarm sound plays. This is alarm case 2. 
+  Outside of these cases is the default alarm state, case 0.
+  */
+  
+  //alarm time is set to the user's input time;
   alarmTime.day = t.day;
   alarmTime.hour = wakeHour;
   alarmTime.minute = wakeMinute;
@@ -393,24 +384,38 @@ void getAlarm(){
 }
 
 void updateLights(){
-  //check if reading time is set > set to reading brightness
+  /*
+  This function calculates the brightness of the LEDs in two stages:
+  First it checks whether a reading time is set, and sets a readingLight brightness.
+  Then it checks which alarm case the clock is in, and sets an alarm brightness.
+  At the end the higher of the two brightnesses is passed to the LEDs
+  */
+
+  //if a minute has passed: reduce the readingtime with 1
   if(readingTime > 0){
     if(millis() >= dimFlag){
       readingTime = readingTime - 1;
       if(readingTime < 0){
         readingTime = 0;
       }
-      dimFlag = millis() + 3600000;
+      dimFlag = millis() + 3600000;  //sets a new flag in 1 minute to reduce the readingtime again
     }
     
     secToRead = max(0, (readEnd - convertTimetoUnix));
 
+    /*
+    sets the brightness levels depending on how long there's time left to read:
+    >10 minutes: full brightness
+    0 minutes: off
+    0-10 minutes: dims the LEDs from full brightness (255) to off (0) in the 600 seconds left to read. 
+                  This means the LEDs need to dim by 0.425 brightness / second
+    */    
     if(readingTime > 10){
       brightnessRL = 255;
     } else if (readingTime == 0){
       brightnessRL = 0;
     } else {
-      brightnessRL = 0.425*secToRead; //0.425
+      brightnessRL = 0.425*secToRead;
     }
   } else {
     brightnessRL = 0;
@@ -421,7 +426,7 @@ void updateLights(){
       case 0: //before alarmStart or after alarmStop
         brightnessLED = 0;
       break;
-      case 1: //after alarmStart, before alarmTime
+      case 1: //within 20 minutes of the set alarm time
         //calculate how many seconds until alarmTime
         unsigned long secsToAlarm = convertATtoUnix - convertTimetoUnix;
         //255 brightness steps / 1200 seconds to alarm = 0.21 brightness/second
@@ -461,6 +466,7 @@ void updateSound(){
       break;
       case 2:
         if(!digitalRead(SFX_BUSY)){
+          //songIndex is 0 indexed, while audioplayer needs 1 or higher. Therefore +1
           audioController.playFileIndex(songIndex + 1);
         }
       break;
@@ -472,7 +478,16 @@ void updateSound(){
 }
 
 void updateDisplay(){
+  /*
+  Function to update the display.
+  1-by-1 it updates the elements on the display: reading time, time, etc. 
+  Each element has a dimmed mode or lighter mode to help the user identify which mode the clock is in.
+  ie. if the user is adjusting the alarm time hour, this element is highlighted while all the other elements on the clock are dimmed
+  The colors of the clock can be adjusted in settings.h
+  */
+  
   //if enough time has passed; dim the display
+  //unless the alarm is going off
   if(dimcount > 30 && dimming && alarmCase != 2){
     tft.fillRect(0, 0, 240, 240, GC9A01A_BLACK);
     return;
@@ -531,7 +546,7 @@ void updateDisplay(){
     tft.setTextSize(4);
     tft.print(songs[songIndex]);
 
-    //Draw volume setting"
+    //Draw volume setting
     tft.setCursor(sevenCursor_x, sevenCursor_y);
     if(mode == 6){tft.setTextColor(ColorOne, GC9A01A_BLACK);}
     else {tft.setTextColor(ColorTwo, GC9A01A_BLACK);}
