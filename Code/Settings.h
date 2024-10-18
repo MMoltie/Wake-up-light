@@ -3,10 +3,10 @@ int ColorOne = GC9A01A_CYAN;
 int ColorTwo = GC9A01A_DARKCYAN;
 
 //default alarm time
-uint8_t wakeHour = 17;    
-uint8_t wakeMinute = 45;
+uint8_t wakeHour = 7;    
+uint8_t wakeMinute = 30;
 
-bool dimming = false;   //allow dimming of screen
+bool dimming = true;   //allow dimming of screen
 
 String songs[6] = {"Bongo's", "Jungle", "Water", "Meadow", "Arabian", "Applaus"};  //names of alarm songs
 byte songIndex = 1;                                                     //index of alarm song to play, default is first song
